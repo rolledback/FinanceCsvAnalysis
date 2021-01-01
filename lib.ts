@@ -28,6 +28,10 @@ const targetDir = argv[0];
 if (!targetDir) {
     throw new Error("No target directory specified.");
 }
+const outputDir = path.join(targetDir, "out");
+if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir);
+}
 
 export function readConfigFile(): { rules: Rule[], actions: Action[], reports: Report[] } {
     let configFile = path.join(targetDir, "config.json");
@@ -84,7 +88,7 @@ export function executeActionsOnActivities(actions: Action[], activities: Activi
 }
 
 export function writeReports(reports: Report[], activities: Activity[]) {
-    let reportsFile = path.join(targetDir, "reports.txt");
+    let reportsFile = path.join(outputDir, "reports.txt");
     fs.writeFileSync(reportsFile, "");
     reports.forEach((report) => writeReport(reportsFile, report, activities));
 }
@@ -150,6 +154,8 @@ function applyRule(rule: Rule, rawActivity: RawActivity): Activity {
                 if (typeof value === "string") {
                     if (value === "<file>") {
                         pV[cV] = rawActivity.file;
+                    } if (value === "<amount>") {
+                        pV[cV] = rawActivity.amount;
                     } else {
                         pV[cV] = value;
                     }
@@ -184,13 +190,21 @@ function executeCancelOutActionOnActivities(action: CancelOutAction, activities:
     allValidSrc.forEach((src) => {
         let matchOn = action.criteria.matchOn;
         let matchOnValue = src.metadata[matchOn];
-        let dst = allValidDst.filter((dst) => dst.metadata[matchOn] === matchOnValue)[0];
+        let dst = allValidDst.filter((dst) => {
+            if (typeof matchOnValue === "number") {
+                return Math.abs(dst.metadata[matchOn]) === Math.abs(matchOnValue);
+            } else if (typeof matchOnValue === "string") {
+                return dst.metadata[matchOn] === matchOnValue;
+            }
+        })[0];
         if (!!dst) {
             console.log(`Executing action '${action.title}' to ${JSON.stringify(src)} and ${JSON.stringify(dst)}`);
             let idxOfSrc = activities.indexOf(src);
             activities.splice(idxOfSrc, 1);
             let idxOfDst = activities.indexOf(dst);
             activities.splice(idxOfDst, 1);
+        } else {
+            console.log(`Failed to execute action '${action.title}' to ${JSON.stringify(src)}`);
         }
     });
 }
@@ -198,6 +212,7 @@ function executeCancelOutActionOnActivities(action: CancelOutAction, activities:
 function writeReport(reportsFile: string, report: Report, activities: Activity[]) {
     fs.appendFileSync(reportsFile, "----------------------------\n")
     fs.appendFileSync(reportsFile, `${report.title}\n`);
+    console.log(`Writing ${report.type} report '${report.title}'`);
     if (report.type === "Sum") {
         writeSumReport(reportsFile, report, activities);
     } else if (report.type === "Print") {
@@ -216,10 +231,16 @@ function writeSumReport(reportsFile: string, report: SumReport, activities: Acti
 }
 
 function writePrintReport(reportsFile: string, report: PrintReport, activities: Activity[]) {
+    let fileContents = "";
+    let csvFilePath = path.join(outputDir, `${report.title}.csv`);
+
     activities.forEach((activity) => {
         if (shouldActivityBeInReport(report.criteria, activity)) {
-            fs.appendFileSync(reportsFile, `${activity.date.toLocaleDateString()}, $${activity.amount.toLocaleString()}, ${activity.description},${activity.type}\n`);
+            fileContents += `${activity.date.toLocaleDateString()}, $${activity.amount}, ${activity.description},${activity.type},${activity.file}\n`
         }
     });
+    fs.appendFileSync(reportsFile, fileContents);
+    fileContents = "Date,Amount,Description,Type,File\n" + fileContents;
+    fs.writeFileSync(csvFilePath, fileContents);
 }
 
