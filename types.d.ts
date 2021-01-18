@@ -11,11 +11,13 @@ export type Activity = {
     amount: number,
     date: Date,
     file: string,
-    metadata: any
+    metadata: any,
+    categories: string[]
 };
 
 export type RuleResult = {
     type: string,
+    categories?: string[],
     metadata: { [key: string]: string | number }
 };
 

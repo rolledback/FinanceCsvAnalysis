@@ -24,7 +24,8 @@ const defaultParsingRule: Rule = {
 };
 
 const argv = process.argv.slice(2);
-const targetDir = argv[0];
+const targetDir = argv[0].replace("\"", "");
+
 if (!targetDir) {
     throw new Error("No target directory specified.");
 }
@@ -89,8 +90,9 @@ export function executeActionsOnActivities(actions: Action[], activities: Activi
 
 export function writeReports(reports: Report[], activities: Activity[]) {
     let reportsFile = path.join(outputDir, "reports.txt");
-    fs.writeFileSync(reportsFile, "");
-    reports.forEach((report) => writeReport(reportsFile, report, activities));
+    writeStandardReport(reportsFile, activities);
+    // fs.writeFileSync(reportsFile, "");
+    // reports.forEach((report) => writeReport(reportsFile, report, activities));
 }
 
 function parseFileToRawActivities(file: string): RawActivity[] {
@@ -125,12 +127,13 @@ function applyRulesToRawActivity(rules: Rule[], rawActivity: RawActivity): Activ
     for (let i = 0; i < rules.length; i++) {
         let rule = rules[i];
         if (doesRuleApply(rule, rawActivity)) {
-            console.log(`Applying rule '${rule.title}' to ${JSON.stringify(rawActivity)}`);
-            return applyRule(rule, rawActivity);
+            let result = applyRule(rule, rawActivity);
+            console.log(`Applying rule '${rule.title}' to ${JSON.stringify(rawActivity)} => ${JSON.stringify(result)}`);
+            return result;
         }
     }
 
-    console.log(`Applying default rule to ${JSON.stringify(rawActivity)}`);
+    // console.log(`Applying default rule to ${JSON.stringify(rawActivity)}`);
     return applyRule(defaultParsingRule, rawActivity);
 }
 
@@ -163,7 +166,8 @@ function applyRule(rule: Rule, rawActivity: RawActivity): Activity {
                     pV[cV] = descriptionRegexExec[value];
                 }
                 return pV;
-            }, {})
+            }, {}),
+        categories: rule.result.categories || []
     }
 }
 
@@ -209,38 +213,53 @@ function executeCancelOutActionOnActivities(action: CancelOutAction, activities:
     });
 }
 
-function writeReport(reportsFile: string, report: Report, activities: Activity[]) {
-    fs.appendFileSync(reportsFile, "----------------------------\n")
-    fs.appendFileSync(reportsFile, `${report.title}\n`);
-    console.log(`Writing ${report.type} report '${report.title}'`);
-    if (report.type === "Sum") {
-        writeSumReport(reportsFile, report, activities);
-    } else if (report.type === "Print") {
-        writePrintReport(reportsFile, report, activities);
+function writeStandardReport(reportsFile: string, activities: Activity[]) {
+    let csvFile = path.join(path.dirname(reportsFile), "activities.csv");
+    if (fs.existsSync(csvFile)) {
+        fs.unlinkSync(csvFile);
     }
-}
 
-function writeSumReport(reportsFile: string, report: SumReport, activities: Activity[]) {
-    let sum = 0;
+    let maxCategories = activities.reduce((pV, cV) => Math.max(pV, cV.categories.length), 0);
+    let appendCsv = (str: string) => fs.appendFileSync(csvFile, str + "\n");
+
+    appendCsv("Date,Amount,Description,Type," + Array(maxCategories).fill("").map((x, i) => `Category ${i},`) + "File");
     activities.forEach((activity) => {
-        if (shouldActivityBeInReport(report.criteria, activity)) {
-            sum += activity.amount;
-        }
+        appendCsv(`${activity.date.toLocaleDateString()}, $${activity.amount}, ${activity.description},${activity.type},` + Array(maxCategories).fill("").map((x, i) => `${activity.categories[i] || ""},`) + `${activity.file}`);
     });
-    fs.appendFileSync(reportsFile, `$${sum.toLocaleString()}\n`);
 }
 
-function writePrintReport(reportsFile: string, report: PrintReport, activities: Activity[]) {
-    let fileContents = "";
-    let csvFilePath = path.join(outputDir, `${report.title}.csv`);
+// function writeReport(reportsFile: string, report: Report, activities: Activity[]) {
+//     fs.appendFileSync(reportsFile, "----------------------------\n")
+//     fs.appendFileSync(reportsFile, `${report.title}\n`);
+//     console.log(`Writing ${report.type} report '${report.title}'`);
+//     if (report.type === "Sum") {
+//         writeSumReport(reportsFile, report, activities);
+//     } else if (report.type === "Print") {
+//         writePrintReport(reportsFile, report, activities);
+//     }
+// }
 
-    activities.forEach((activity) => {
-        if (shouldActivityBeInReport(report.criteria, activity)) {
-            fileContents += `${activity.date.toLocaleDateString()}, $${activity.amount}, ${activity.description},${activity.type},${activity.file}\n`
-        }
-    });
-    fs.appendFileSync(reportsFile, fileContents);
-    fileContents = "Date,Amount,Description,Type,File\n" + fileContents;
-    fs.writeFileSync(csvFilePath, fileContents);
-}
+// function writeSumReport(reportsFile: string, report: SumReport, activities: Activity[]) {
+//     let sum = 0;
+//     activities.forEach((activity) => {
+//         if (shouldActivityBeInReport(report.criteria, activity)) {
+//             sum += activity.amount;
+//         }
+//     });
+//     fs.appendFileSync(reportsFile, `$${sum.toLocaleString()}\n`);
+// }
+
+// function writePrintReport(reportsFile: string, report: PrintReport, activities: Activity[]) {
+//     let fileContents = "";
+//     let csvFilePath = path.join(outputDir, `${report.title}.csv`);
+
+//     activities.forEach((activity) => {
+//         if (shouldActivityBeInReport(report.criteria, activity)) {
+//             fileContents += `${activity.date.toLocaleDateString()}, $${activity.amount}, ${activity.description},${activity.type},${activity.file}\n`
+//         }
+//     });
+//     fs.appendFileSync(reportsFile, fileContents);
+//     fileContents = "Date,Amount,Description,Type,File\n" + fileContents;
+//     fs.writeFileSync(csvFilePath, fileContents);
+// }
 
