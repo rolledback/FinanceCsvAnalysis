@@ -44,7 +44,16 @@ export function readConfigFile(): { rules: Rule[], actions: Action[], reports: R
     let configFileParsed = (JSON.parse(fs.readFileSync(configFile).toString()));
 
     return {
-        rules: configFileParsed.rules,
+        rules: (configFileParsed.rules as Rule[]).reduce<Rule[]>((pV, cV) => {
+            typeof cV.descriptionRegex === "string" ? pV.push(cV) : pV.push(...cV.descriptionRegex.map<Rule>((regex) => {
+                return {
+                    title: cV.title,
+                    descriptionRegex: regex,
+                    result: cV.result
+                };
+            }));
+            return pV;
+        }, []),
         actions: configFileParsed.actions,
         reports: configFileParsed.reports
     };
@@ -139,35 +148,44 @@ function applyRulesToRawActivity(rules: Rule[], rawActivity: RawActivity): Activ
 
 function doesRuleApply(rule: Rule, rawActivity: RawActivity): boolean {
     let predicates: ((rawActivity: RawActivity) => boolean)[] = [];
-    predicates.push((rawActivity: RawActivity) => new RegExp(rule.descriptionRegex).test(rawActivity.description));
-    return predicates.reduce<boolean>((pV, predicate) => pV && predicate(rawActivity), true);
+    if (Array.isArray(rule.descriptionRegex)) {
+        throw new Error("Rules with array descriptionRegex should have been expanded before calling doesRuleApply");
+    } else {
+        const regex = rule.descriptionRegex;
+        predicates.push((rawActivity: RawActivity) => new RegExp(regex).test(rawActivity.description));
+        return predicates.reduce<boolean>((pV, predicate) => pV && predicate(rawActivity), true);
+    }
 }
 
 function applyRule(rule: Rule, rawActivity: RawActivity): Activity {
-    let descriptionRegexExec = new RegExp(rule.descriptionRegex).exec(rawActivity.description);
-    return {
-        type: rule.result.type,
-        description: rawActivity.description,
-        amount: rawActivity.amount,
-        date: new Date(rawActivity.date),
-        file: rawActivity.file,
-        metadata: Object.keys(rule.result.metadata)
-            .reduce<{}>((pV, cV) => {
-                let value = rule.result.metadata[cV];
-                if (typeof value === "string") {
-                    if (value === "<file>") {
-                        pV[cV] = rawActivity.file;
-                    } if (value === "<amount>") {
-                        pV[cV] = rawActivity.amount;
+    if (Array.isArray(rule.descriptionRegex)) {
+        throw new Error("Rules with array descriptionRegex should have been expanded before calling doesRuleApply");
+    } else {
+        let descriptionRegexExec = new RegExp(rule.descriptionRegex).exec(rawActivity.description);
+        return {
+            type: rule.result.type,
+            description: rawActivity.description,
+            amount: rawActivity.amount,
+            date: new Date(rawActivity.date),
+            file: rawActivity.file,
+            metadata: Object.keys(rule.result.metadata || {})
+                .reduce<{}>((pV, cV) => {
+                    let value = rule.result.metadata[cV];
+                    if (typeof value === "string") {
+                        if (value === "<file>") {
+                            pV[cV] = rawActivity.file;
+                        } if (value === "<amount>") {
+                            pV[cV] = rawActivity.amount;
+                        } else {
+                            pV[cV] = value;
+                        }
                     } else {
-                        pV[cV] = value;
+                        pV[cV] = descriptionRegexExec[value];
                     }
-                } else {
-                    pV[cV] = descriptionRegexExec[value];
-                }
-                return pV;
-            }, {}),
-        categories: rule.result.categories || []
+                    return pV;
+                }, {}),
+            categories: rule.result.categories || []
+        }
     }
 }
 
@@ -222,9 +240,9 @@ function writeStandardReport(reportsFile: string, activities: Activity[]) {
     let maxCategories = activities.reduce((pV, cV) => Math.max(pV, cV.categories.length), 0);
     let appendCsv = (str: string) => fs.appendFileSync(csvFile, str + "\n");
 
-    appendCsv("Date,Amount,Description,Type," + Array(maxCategories).fill("").map((x, i) => `Category ${i},`) + "File");
+    appendCsv("Date,Amount,Description,Type," + Array(maxCategories).fill("").map((x, i) => `Category ${i}`).join(",") + ",File");
     activities.forEach((activity) => {
-        appendCsv(`${activity.date.toLocaleDateString()}, $${activity.amount}, ${activity.description},${activity.type},` + Array(maxCategories).fill("").map((x, i) => `${activity.categories[i] || ""},`) + `${activity.file}`);
+        appendCsv(`${activity.date.toLocaleDateString()}, $${activity.amount}, ${activity.description},${activity.type},` + Array(maxCategories).fill("").map((x, i) => `${activity.categories[i] || ""}`).join(",") + `,${activity.file}`);
     });
 }
 

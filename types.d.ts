@@ -18,12 +18,12 @@ export type Activity = {
 export type RuleResult = {
     type: string,
     categories?: string[],
-    metadata: { [key: string]: string | number }
+    metadata?: { [key: string]: string | number }
 };
 
 export type Rule = {
     title: string,
-    descriptionRegex: string,
+    descriptionRegex: string | string[],
     result: RuleResult
 };
 
