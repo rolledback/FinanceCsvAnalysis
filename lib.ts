@@ -7,10 +7,6 @@ import {
     Activity,
     Rule,
     Action,
-    ReportCriteria,
-    Report,
-    SumReport,
-    PrintReport,
     CancelOutAction,
 } from "./types";
 
@@ -34,7 +30,7 @@ if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir);
 }
 
-export function readConfigFile(): { rules: Rule[], actions: Action[], reports: Report[] } {
+export function readConfigFile(): { rules: Rule[], actions: Action[] } {
     let configFile = path.join(targetDir, "config.json");
 
     if (!fs.existsSync(configFile)) {
@@ -54,8 +50,7 @@ export function readConfigFile(): { rules: Rule[], actions: Action[], reports: R
             }));
             return pV;
         }, []),
-        actions: configFileParsed.actions,
-        reports: configFileParsed.reports
+        actions: configFileParsed.actions
     };
 }
 
@@ -97,39 +92,83 @@ export function executeActionsOnActivities(actions: Action[], activities: Activi
     return activities;
 }
 
-export function writeReports(reports: Report[], activities: Activity[]) {
-    let reportsFile = path.join(outputDir, "reports.txt");
-    writeStandardReport(reportsFile, activities);
-    // fs.writeFileSync(reportsFile, "");
-    // reports.forEach((report) => writeReport(reportsFile, report, activities));
+export function writeOutFile(activities: Activity[]) {
+    console.log("Writing out file...");
+    let csvFile = path.join(outputDir, "activities.csv");
+    if (fs.existsSync(csvFile)) {
+        fs.unlinkSync(csvFile);
+    }
+
+    let maxCategories = activities.reduce((pV, cV) => Math.max(pV, cV.categories.length), 0);
+    let appendCsv = (str: string) => fs.appendFileSync(csvFile, str + "\n");
+
+    appendCsv("Date,Amount,Description,Type," + Array(maxCategories).fill("").map((x, i) => `Category ${i}`).join(","));
+    activities.forEach((activity) => {
+        appendCsv(`${activity.date.toLocaleDateString()}, $${activity.amount}, ${activity.description},${activity.type},` + Array(maxCategories).fill("").map((x, i) => `${activity.categories[i] || ""}`).join(","));
+    });
+    console.log(`Done. Path: ${csvFile}`);
 }
 
 function parseFileToRawActivities(file: string): RawActivity[] {
     const dateColumn = 0;
     const amountColumn = 1;
     const descriptionColumn = 2;
+    const firstCategoryColumn = 3;
     return fs.readFileSync(file)
         .toString()
         .split(/\r?\n/)
         .filter((line) => !!line)
+        .slice(1)
         .map<RawActivity>((line) => {
             let lineSplit = line.split(",");
+            const maxCategoryColumn = lineSplit.length - 1;
             return {
-                date: extractRowValue(lineSplit, dateColumn),
-                amount: Number.parseFloat(extractRowValue(lineSplit, amountColumn)),
+                date: extractStrRowValue(lineSplit, dateColumn),
+                amount: extract$RowValue(lineSplit, amountColumn),
                 file: path.basename(file),
-                description: extractRowValue(lineSplit, descriptionColumn)
+                description: extractStrRowValue(lineSplit, descriptionColumn),
+                categories: extractStrRowValues(lineSplit, firstCategoryColumn, maxCategoryColumn)
             };
         });
 }
 
-function extractRowValue(row: string[], idx: number): string {
+function extractStrRowValue(row: string[], idx: number): string | undefined {
     let rowValue = row[idx];
-    if (rowValue[0] === "\"" && rowValue[rowValue.length] === "\"") {
-        rowValue = rowValue.slice(1, -1);
+    if (!!rowValue) {
+        if (rowValue[0] === "\"" && rowValue[rowValue.length] === "\"") {
+            rowValue = rowValue.slice(1, -1);
+        }
+        rowValue = rowValue.trim();
     }
 
     return rowValue;
+}
+
+function extractStrRowValues(row: string[], startIdx: number, endIdx: number): (string | undefined)[] {
+    let retValue: string[] = [];
+    let currValue: string | undefined = undefined;
+    do {
+        currValue = extractStrRowValue(row, startIdx++);
+        if (!!currValue) {
+            retValue.push(currValue);
+        }
+    } while (!!currValue && startIdx <= endIdx)
+
+    return retValue;
+}
+
+function extract$RowValue(row: string[], idx: number): (number | undefined) {
+    let str = extractStrRowValue(row, idx);
+    if (!!str) {
+        if (str[0] === "$") {
+            str = str.slice(1);
+        } else {
+            str = str.slice(0);
+        }
+        return Number.parseFloat(str);
+    } else {
+        return undefined;
+    }
 }
 
 function applyRulesToRawActivity(rules: Rule[], rawActivity: RawActivity): Activity {
@@ -189,22 +228,6 @@ function applyRule(rule: Rule, rawActivity: RawActivity): Activity {
     }
 }
 
-function shouldActivityBeInReport(criteria: ReportCriteria, activity: Activity): boolean {
-    let predicates: ((activity: Activity) => boolean)[] = [];
-    if (!!criteria.type) {
-        const neededType = criteria.type;
-        predicates.push((activity: Activity) => activity.type === neededType);
-    }
-
-    if (criteria.isPositive === true) {
-        predicates.push((activity: Activity) => activity.amount >= 0);
-    } else if (criteria.isPositive === false) {
-        predicates.push((activity: Activity) => activity.amount < 0);
-    }
-
-    return predicates.reduce<boolean>((pV, predicate) => pV && predicate(activity), true);
-}
-
 function executeCancelOutActionOnActivities(action: CancelOutAction, activities: Activity[]): void {
     let allValidSrc = activities.filter((a) => a.type === action.criteria.aType);
     let allValidDst = activities.filter((a) => a.type === action.criteria.bType);
@@ -230,54 +253,3 @@ function executeCancelOutActionOnActivities(action: CancelOutAction, activities:
         }
     });
 }
-
-function writeStandardReport(reportsFile: string, activities: Activity[]) {
-    let csvFile = path.join(path.dirname(reportsFile), "activities.csv");
-    if (fs.existsSync(csvFile)) {
-        fs.unlinkSync(csvFile);
-    }
-
-    let maxCategories = activities.reduce((pV, cV) => Math.max(pV, cV.categories.length), 0);
-    let appendCsv = (str: string) => fs.appendFileSync(csvFile, str + "\n");
-
-    appendCsv("Date,Amount,Description,Type," + Array(maxCategories).fill("").map((x, i) => `Category ${i}`).join(",") + ",File");
-    activities.forEach((activity) => {
-        appendCsv(`${activity.date.toLocaleDateString()}, $${activity.amount}, ${activity.description},${activity.type},` + Array(maxCategories).fill("").map((x, i) => `${activity.categories[i] || ""}`).join(",") + `,${activity.file}`);
-    });
-}
-
-// function writeReport(reportsFile: string, report: Report, activities: Activity[]) {
-//     fs.appendFileSync(reportsFile, "----------------------------\n")
-//     fs.appendFileSync(reportsFile, `${report.title}\n`);
-//     console.log(`Writing ${report.type} report '${report.title}'`);
-//     if (report.type === "Sum") {
-//         writeSumReport(reportsFile, report, activities);
-//     } else if (report.type === "Print") {
-//         writePrintReport(reportsFile, report, activities);
-//     }
-// }
-
-// function writeSumReport(reportsFile: string, report: SumReport, activities: Activity[]) {
-//     let sum = 0;
-//     activities.forEach((activity) => {
-//         if (shouldActivityBeInReport(report.criteria, activity)) {
-//             sum += activity.amount;
-//         }
-//     });
-//     fs.appendFileSync(reportsFile, `$${sum.toLocaleString()}\n`);
-// }
-
-// function writePrintReport(reportsFile: string, report: PrintReport, activities: Activity[]) {
-//     let fileContents = "";
-//     let csvFilePath = path.join(outputDir, `${report.title}.csv`);
-
-//     activities.forEach((activity) => {
-//         if (shouldActivityBeInReport(report.criteria, activity)) {
-//             fileContents += `${activity.date.toLocaleDateString()}, $${activity.amount}, ${activity.description},${activity.type},${activity.file}\n`
-//         }
-//     });
-//     fs.appendFileSync(reportsFile, fileContents);
-//     fileContents = "Date,Amount,Description,Type,File\n" + fileContents;
-//     fs.writeFileSync(csvFilePath, fileContents);
-// }
-

@@ -2,17 +2,18 @@ export type RawActivity = {
     date: string,
     amount: number,
     file: string,
-    description: string
+    description: string,
+    categories: string[]
 };
 
 export type Activity = {
-    type: string,
-    description: string,
-    amount: number,
     date: Date,
+    amount: number,
     file: string,
     metadata: any,
     categories: string[]
+    type: string,
+    description: string,
 };
 
 export type RuleResult = {
@@ -38,22 +39,3 @@ export type CancelOutAction = {
 };
 
 export type Action = CancelOutAction;
-
-export type ReportCriteria = {
-    type?: string;
-    isPositive?: boolean;
-};
-
-export type SumReport = {
-    type: "Sum",
-    title: string
-    criteria: ReportCriteria
-};
-
-export type PrintReport = {
-    type: "Print",
-    title: string
-    criteria: ReportCriteria
-};
-
-export type Report = SumReport | PrintReport;

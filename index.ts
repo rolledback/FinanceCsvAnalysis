@@ -5,13 +5,13 @@ import {
     applyRulesToRawActivities,
     sortActivitesByDate,
     executeActionsOnActivities,
-    writeReports
+    writeOutFile
 } from "./lib";
 
-let { rules, actions, reports } = readConfigFile();
+let { rules, actions } = readConfigFile();
 let filesToAnalyze = getFilesToAnalyze();
 let rawActivities = parseFilesToRawActivities(filesToAnalyze);
 let activities = applyRulesToRawActivities(rules, rawActivities);
 activities = sortActivitesByDate(activities);
 activities = executeActionsOnActivities(actions, activities);
-writeReports(reports, activities);
+writeOutFile(activities);
