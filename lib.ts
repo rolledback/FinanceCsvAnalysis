@@ -104,7 +104,7 @@ export function writeOutFile(activities: Activity[]) {
 
     appendCsv("Date,Amount,Description,Type," + Array(maxCategories).fill("").map((x, i) => `Category ${i}`).join(","));
     activities.forEach((activity) => {
-        appendCsv(`${activity.date.toLocaleDateString()}, $${activity.amount}, ${activity.description},${activity.type},` + Array(maxCategories).fill("").map((x, i) => `${activity.categories[i] || ""}`).join(","));
+        appendCsv(`${activity.date.toLocaleDateString()},$${activity.amount},${activity.description.trim()},${activity.type.trim()},` + Array(maxCategories).fill("").map((x, i) => `${(activity.categories[i] || "").trim()}`).join(","));
     });
     console.log(`Done. Path: ${csvFile}`);
 }
