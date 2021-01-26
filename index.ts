@@ -2,16 +2,28 @@ import {
     readConfigFile,
     getFilesToAnalyze,
     parseFilesToRawActivities,
+    parseFilesToActivities,
     applyRulesToRawActivities,
     sortActivitesByDate,
     executeActionsOnActivities,
-    writeOutFile
+    writeOutFile,
+    getCommand,
+    log
 } from "./lib";
+import { Activity } from "./types";
 
 let { rules, actions } = readConfigFile();
+let command = getCommand();
 let filesToAnalyze = getFilesToAnalyze();
-let rawActivities = parseFilesToRawActivities(filesToAnalyze);
-let activities = applyRulesToRawActivities(rules, rawActivities);
+let activities: Activity[];
+if (command === "analyze") {
+    log("Analyzing files...");
+    let rawActivities = parseFilesToRawActivities(filesToAnalyze);
+    activities = applyRulesToRawActivities(rules, rawActivities);
+} else {
+    log("Combining files...");
+    activities = parseFilesToActivities(filesToAnalyze);
+}
 activities = sortActivitesByDate(activities);
 activities = executeActionsOnActivities(actions, activities);
 writeOutFile(activities);

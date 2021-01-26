@@ -2,8 +2,7 @@ export type RawActivity = {
     date: string,
     amount: number,
     file: string,
-    description: string,
-    categories: string[]
+    description: string
 };
 
 export type Activity = {

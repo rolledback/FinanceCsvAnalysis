@@ -20,7 +20,9 @@ const defaultParsingRule: Rule = {
 };
 
 const argv = process.argv.slice(2);
-const targetDir = argv[0].replace("\"", "");
+const command = argv[0];
+const targetDir = argv[1].replace("\"", "");
+const maybeConfigFile = argv[2]
 
 if (!targetDir) {
     throw new Error("No target directory specified.");
@@ -29,12 +31,28 @@ const outputDir = path.join(targetDir, "out");
 if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir);
 }
+const logFile = path.join(outputDir, "log.txt");
+if (fs.existsSync(logFile)) {
+    fs.unlinkSync(logFile);
+}
+
+log(`argv: ${argv}`);
+log(`targetDir: ${targetDir}`);
+log(`outputDir: ${outputDir}`);
+
+export function getCommand(): "analyze" | "join" {
+    if (command !== "analyze" && command !== "join") {
+        throw new Error("Invalid command.");
+    }
+    return command;
+}
 
 export function readConfigFile(): { rules: Rule[], actions: Action[] } {
-    let configFile = path.join(targetDir, "config.json");
+    let configFile = maybeConfigFile || path.join(targetDir, "config.json");
 
     if (!fs.existsSync(configFile)) {
-        throw new Error(`Target directory ${targetDir} must contain a config.json file.`);
+        log("No config file found.");
+        return { rules: [], actions: [] };
     }
 
     let configFileParsed = (JSON.parse(fs.readFileSync(configFile).toString()));
@@ -78,6 +96,13 @@ export function applyRulesToRawActivities(rules: Rule[], rawActivities: RawActiv
     return rawActivities.map<Activity | undefined>((rawActivity) => applyRulesToRawActivity(rules, rawActivity));
 }
 
+export function parseFilesToActivities(files: string[]): Activity[] {
+    return files.reduce<Activity[]>((pV, file) => {
+        pV.push(...parseFileToActivities(file));
+        return pV;
+    }, []);
+}
+
 export function sortActivitesByDate(activities: Activity[]): Activity[] {
     return activities.sort((a, b) => a.date.getTime() - b.date.getTime());
 }
@@ -102,32 +127,66 @@ export function writeOutFile(activities: Activity[]) {
     let maxCategories = activities.reduce((pV, cV) => Math.max(pV, cV.categories.length), 0);
     let appendCsv = (str: string) => fs.appendFileSync(csvFile, str + "\n");
 
-    appendCsv("Date,Amount,Description,Type," + Array(maxCategories).fill("").map((x, i) => `Category ${i}`).join(","));
+    appendCsv("Date,Amount,Description,Type," + Array(maxCategories).fill("").map((x, i) => `Category ${i}`).join(",") + ",File");
     activities.forEach((activity) => {
-        appendCsv(`${activity.date.toLocaleDateString()},$${activity.amount},${activity.description.trim()},${activity.type.trim()},` + Array(maxCategories).fill("").map((x, i) => `${(activity.categories[i] || "").trim()}`).join(","));
+        appendCsv(`${activity.date.toLocaleDateString()},$${activity.amount},${activity.description.trim()},${activity.type.trim()},` + Array(maxCategories).fill("").map((x, i) => `${(activity.categories[i] || "").trim()}`).join(",") + `,${activity.file}`);
     });
     log(`Done. Path: ${csvFile}`);
+}
+
+export function log(message: string): void {
+    fs.appendFileSync(logFile, [`[${new Date().toISOString()}]`, message].join(" ") + "\n");
 }
 
 function parseFileToRawActivities(file: string): RawActivity[] {
     const dateColumn = 0;
     const amountColumn = 1;
     const descriptionColumn = 2;
-    const firstCategoryColumn = 3;
     return fs.readFileSync(file)
         .toString()
         .split(/\r?\n/)
         .filter((line) => !!line)
+        .filter((line) => line.match(/[^\s\\]/))
         .slice(1)
-        .map<RawActivity>((line) => {
+        .map<RawActivity>((line, idx) => {
             let lineSplit = line.split(",");
-            const maxCategoryColumn = lineSplit.length - 1;
-            return {
+            let result = {
                 date: extractStrRowValue(lineSplit, dateColumn),
                 amount: extract$RowValue(lineSplit, amountColumn),
                 file: path.basename(file),
+                description: extractStrRowValue(lineSplit, descriptionColumn)
+            };
+            log(`Parsed line (${idx}) ${JSON.stringify(lineSplit)} to ${JSON.stringify(result)}`);
+            return result;
+        });
+}
+
+function parseFileToActivities(file: string): Activity[] {
+    const lines = fs.readFileSync(file)
+        .toString()
+        .split(/\r?\n/);
+    const firstLine = lines.shift();
+    const totalColumns = firstLine.split(",").length;
+    const dateColumn = 0;
+    const amountColumn = 1;
+    const descriptionColumn = 2;
+    const typeColumn = 3;
+    const fileColumn = totalColumns - 1;
+    const categoriesStart = 4;
+    const categoriesEnd = fileColumn - 1;
+    return lines.filter((line) => !!line)
+        .filter((line) => line.match(/[^\s\\]/))
+        .slice(1)
+        .map<Activity>((line) => {
+            let lineSplit = line.split(",");
+            return {
+                date: new Date(extractStrRowValue(lineSplit, dateColumn)),
+                amount: extract$RowValue(lineSplit, amountColumn),
+                type: extractStrRowValue(lineSplit, typeColumn),
+                file: path.basename(file) + ` (${extractStrRowValue(lineSplit, fileColumn)})`,
                 description: extractStrRowValue(lineSplit, descriptionColumn),
-                categories: extractStrRowValues(lineSplit, firstCategoryColumn, maxCategoryColumn)
+                categories: (categoriesStart !== fileColumn && categoriesEnd >= categoriesStart) ? extractStrRowValues(lineSplit, categoriesStart, categoriesEnd) : [],
+                metadata: {}
             };
         });
 }
@@ -256,10 +315,4 @@ function executeCancelOutActionOnActivities(action: CancelOutAction, activities:
             log(`Failed to execute action '${action.title}' to ${JSON.stringify(src)}`);
         }
     });
-}
-
-function log(message?: any, ...optionalParams: any[]): void {
-    let logFile = path.join(outputDir, "log.txt");
-    fs.appendFileSync(logFile, [`[${new Date().toLocaleDateString()}]`, message, ...optionalParams].join(" "));
-    console.log(message, optionalParams);
 }
