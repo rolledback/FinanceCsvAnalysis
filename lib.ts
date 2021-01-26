@@ -93,7 +93,7 @@ export function executeActionsOnActivities(actions: Action[], activities: Activi
 }
 
 export function writeOutFile(activities: Activity[]) {
-    console.log("Writing out file...");
+    log("Writing out file...");
     let csvFile = path.join(outputDir, "activities.csv");
     if (fs.existsSync(csvFile)) {
         fs.unlinkSync(csvFile);
@@ -106,7 +106,7 @@ export function writeOutFile(activities: Activity[]) {
     activities.forEach((activity) => {
         appendCsv(`${activity.date.toLocaleDateString()},$${activity.amount},${activity.description.trim()},${activity.type.trim()},` + Array(maxCategories).fill("").map((x, i) => `${(activity.categories[i] || "").trim()}`).join(","));
     });
-    console.log(`Done. Path: ${csvFile}`);
+    log(`Done. Path: ${csvFile}`);
 }
 
 function parseFileToRawActivities(file: string): RawActivity[] {
@@ -172,17 +172,21 @@ function extract$RowValue(row: string[], idx: number): (number | undefined) {
 }
 
 function applyRulesToRawActivity(rules: Rule[], rawActivity: RawActivity): Activity {
+    let result: Activity | undefined;
     for (let i = 0; i < rules.length; i++) {
         let rule = rules[i];
         if (doesRuleApply(rule, rawActivity)) {
-            let result = applyRule(rule, rawActivity);
-            console.log(`Applying rule '${rule.title}' to ${JSON.stringify(rawActivity)} => ${JSON.stringify(result)}`);
-            return result;
+            if (!result) {
+                result = applyRule(rule, rawActivity);
+                log(`Applying rule '${rule.title}' to ${JSON.stringify(rawActivity)} => ${JSON.stringify(result)}`);
+            } else {
+                log(`Rule '${rule.title}' would have applied to ${JSON.stringify(rawActivity)} but a rule has already been applied.`);
+            }
         }
     }
 
-    // console.log(`Applying default rule to ${JSON.stringify(rawActivity)}`);
-    return applyRule(defaultParsingRule, rawActivity);
+    log(`Applying default rule to ${JSON.stringify(rawActivity)}`);
+    return result || applyRule(defaultParsingRule, rawActivity);
 }
 
 function doesRuleApply(rule: Rule, rawActivity: RawActivity): boolean {
@@ -243,13 +247,19 @@ function executeCancelOutActionOnActivities(action: CancelOutAction, activities:
             }
         })[0];
         if (!!dst) {
-            console.log(`Executing action '${action.title}' to ${JSON.stringify(src)} and ${JSON.stringify(dst)}`);
+            log(`Executing action '${action.title}' to ${JSON.stringify(src)} and ${JSON.stringify(dst)}`);
             let idxOfSrc = activities.indexOf(src);
             activities.splice(idxOfSrc, 1);
             let idxOfDst = activities.indexOf(dst);
             activities.splice(idxOfDst, 1);
         } else {
-            console.log(`Failed to execute action '${action.title}' to ${JSON.stringify(src)}`);
+            log(`Failed to execute action '${action.title}' to ${JSON.stringify(src)}`);
         }
     });
+}
+
+function log(message?: any, ...optionalParams: any[]): void {
+    let logFile = path.join(outputDir, "log.txt");
+    fs.appendFileSync(logFile, [`[${new Date().toLocaleDateString()}]`, message, ...optionalParams].join(" "));
+    console.log(message, optionalParams);
 }
