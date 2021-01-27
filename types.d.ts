@@ -21,6 +21,8 @@ export type RuleResult = {
     metadata?: { [key: string]: string | number }
 };
 
+export type Imports = string[];
+
 export type Rule = {
     title: string,
     descriptionRegex: string | string[],

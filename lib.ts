@@ -8,6 +8,7 @@ import {
     Rule,
     Action,
     CancelOutAction,
+    Imports,
 } from "./types";
 
 const defaultParsingRule: Rule = {
@@ -47,15 +48,18 @@ export function getCommand(): "analyze" | "join" {
     return command;
 }
 
-export function readConfigFile(): { rules: Rule[], actions: Action[] } {
-    let configFile = maybeConfigFile || path.join(targetDir, "config.json");
+export function readConfigFile(filePath?: string): { rules: Rule[], actions: Action[] } {
+    let configFile = filePath || maybeConfigFile || path.join(targetDir, "config.json");
 
     if (!fs.existsSync(configFile)) {
-        log("No config file found.");
+        log(`No config file ${configFile} found.`);
         return { rules: [], actions: [] };
     }
+    log(`Reading config file ${configFile}`);
 
-    let configFileParsed = (JSON.parse(fs.readFileSync(configFile).toString()));
+    let configFileParsed: { rules: Rule[], actions: Action[], imports?: Imports } = (JSON.parse(fs.readFileSync(configFile).toString()));
+
+    let importedFiles: { rules: Rule[], actions: Action[], imports?: Imports }[] = (configFileParsed.imports || []).map((i) => readConfigFile(path.resolve(targetDir, i)));
 
     return {
         rules: (configFileParsed.rules as Rule[]).reduce<Rule[]>((pV, cV) => {
@@ -67,8 +71,8 @@ export function readConfigFile(): { rules: Rule[], actions: Action[] } {
                 };
             }));
             return pV;
-        }, []),
-        actions: configFileParsed.actions
+        }, []).concat((importedFiles.map<Rule[]>((cV) => cV.rules)).flat()),
+        actions: configFileParsed.actions.concat((importedFiles.map<Action[]>((cV) => cV.actions)).flat())
     };
 }
 
