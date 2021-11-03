@@ -17,7 +17,8 @@ const defaultParsingRule: Rule = {
     "result": {
         "type": "Other",
         "metadata": {}
-    }
+    },
+    sourceFile: "N/A"
 };
 
 const argv = process.argv.slice(2);
@@ -57,7 +58,7 @@ export function readConfigFile(filePath?: string): { rules: Rule[], actions: Act
     }
     log(`Reading config file ${configFile}`);
 
-    let configFileParsed: { rules: Rule[], actions: Action[], imports?: Imports } = (JSON.parse(fs.readFileSync(configFile).toString()));
+    let configFileParsed: { rules: Rule[], actions: Action[], imports?: Imports, fileName: string } = { ...JSON.parse(fs.readFileSync(configFile).toString()), fileName: path.basename(configFile) };
 
     let importedFiles: { rules: Rule[], actions: Action[], imports?: Imports }[] = (configFileParsed.imports || []).map((i) => readConfigFile(path.resolve(targetDir, i)));
 
@@ -67,7 +68,8 @@ export function readConfigFile(filePath?: string): { rules: Rule[], actions: Act
                 return {
                     title: cV.title,
                     descriptionRegex: regex,
-                    result: cV.result
+                    result: cV.result,
+                    sourceFile: configFileParsed.fileName
                 };
             }));
             return pV;
@@ -84,25 +86,39 @@ export function getFilesToAnalyze(): string[] {
 
     if (filesToAnalyze.length === 0) {
         throw new Error(`Target directory ${targetDir} must contain at least one .csv file.`);
+    } else {
+        log(`Got files: ${JSON.stringify(filesToAnalyze)}`);
     }
 
     return filesToAnalyze;
 }
 
-export function parseFilesToRawActivities(files: string[]): RawActivity[] {
+export function parseCsvFilesToRawActivities(files: string[]): RawActivity[] {
     return files.reduce<RawActivity[]>((pV, file) => {
-        pV.push(...parseFileToRawActivities(file));
+        pV.push(...parseCsvFileToRawActivities(file));
         return pV;
     }, []);
 }
 
 export function applyRulesToRawActivities(rules: Rule[], rawActivities: RawActivity[]): Activity[] {
-    return rawActivities.map<Activity | undefined>((rawActivity) => applyRulesToRawActivity(rules, rawActivity));
+    let activities: Activity[] = [];
+    let usedRules: Set<Rule> = new Set<Rule>();
+    rawActivities.forEach((rawActivity) => {
+        let result = applyRulesToRawActivity(rules, rawActivity);
+        activities.push(result.activity);
+        for (let rule of result.appliedRules) {
+            usedRules.add(rule);
+        }
+    });
+
+    logUnUsedRules(rules, usedRules);
+
+    return activities;
 }
 
-export function parseFilesToActivities(files: string[]): Activity[] {
+export function parseActivityFilesToActivities(files: string[]): Activity[] {
     return files.reduce<Activity[]>((pV, file) => {
-        pV.push(...parseFileToActivities(file));
+        pV.push(...parseActivityFileToActivities(file));
         return pV;
     }, []);
 }
@@ -121,8 +137,8 @@ export function executeActionsOnActivities(actions: Action[], activities: Activi
     return activities;
 }
 
-export function writeOutFile(activities: Activity[]) {
-    log("Writing out file...");
+export function writeActivityFile(activities: Activity[]) {
+    log("Writing activity file...");
     let csvFile = path.join(outputDir, "activities.csv");
     if (fs.existsSync(csvFile)) {
         fs.unlinkSync(csvFile);
@@ -130,7 +146,6 @@ export function writeOutFile(activities: Activity[]) {
 
     let maxCategories = activities.reduce((pV, cV) => Math.max(pV, cV.categories.length), 0);
     let appendCsv = (str: string) => fs.appendFileSync(csvFile, str + "\n");
-
     appendCsv("Date,Amount,Description,Type," + Array(maxCategories).fill("").map((x, i) => `Category ${i}`).join(",") + ",File");
     activities.forEach((activity) => {
         appendCsv(`${activity.date.toLocaleDateString()},$${activity.amount},${activity.description.trim()},${activity.type.trim()},` + Array(maxCategories).fill("").map((x, i) => `${(activity.categories[i] || "").trim()}`).join(",") + `,${activity.file}`);
@@ -142,7 +157,7 @@ export function log(message: string): void {
     fs.appendFileSync(logFile, [`[${new Date().toISOString()}]`, message].join(" ") + "\n");
 }
 
-function parseFileToRawActivities(file: string): RawActivity[] {
+function parseCsvFileToRawActivities(file: string): RawActivity[] {
     const dateColumn = 0;
     const amountColumn = 1;
     const descriptionColumn = 2;
@@ -153,7 +168,7 @@ function parseFileToRawActivities(file: string): RawActivity[] {
         .filter((line) => line.match(/[^\s\\]/))
         .slice(1)
         .map<RawActivity>((line, idx) => {
-            let lineSplit = line.split(",");
+            let lineSplit = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
             let result = {
                 date: extractStrRowValue(lineSplit, dateColumn),
                 amount: extract$RowValue(lineSplit, amountColumn),
@@ -165,7 +180,7 @@ function parseFileToRawActivities(file: string): RawActivity[] {
         });
 }
 
-function parseFileToActivities(file: string): Activity[] {
+function parseActivityFileToActivities(file: string): Activity[] {
     const lines = fs.readFileSync(file)
         .toString()
         .split(/\r?\n/);
@@ -180,7 +195,6 @@ function parseFileToActivities(file: string): Activity[] {
     const categoriesEnd = fileColumn - 1;
     return lines.filter((line) => !!line)
         .filter((line) => line.match(/[^\s\\]/))
-        .slice(1)
         .map<Activity>((line) => {
             let lineSplit = line.split(",");
             return {
@@ -198,11 +212,12 @@ function parseFileToActivities(file: string): Activity[] {
 function extractStrRowValue(row: string[], idx: number): string | undefined {
     let rowValue = row[idx];
     if (!!rowValue) {
-        if (rowValue[0] === "\"" && rowValue[rowValue.length] === "\"") {
+        if (rowValue[0] === "\"" && rowValue[rowValue.length - 1] === "\"") {
             rowValue = rowValue.slice(1, -1);
         }
         rowValue = rowValue.trim();
     }
+    rowValue = rowValue.replace(",", "");
 
     return rowValue;
 }
@@ -234,22 +249,29 @@ function extract$RowValue(row: string[], idx: number): (number | undefined) {
     }
 }
 
-function applyRulesToRawActivity(rules: Rule[], rawActivity: RawActivity): Activity {
+function applyDefaultRuleToRawActivity(rawActivity: RawActivity): Activity {
+    log(`Applying default rule to ${JSON.stringify(rawActivity)}`);
+    return applyRule(defaultParsingRule, rawActivity);
+}
+
+function applyRulesToRawActivity(rules: Rule[], rawActivity: RawActivity): { activity: Activity, appliedRules: Set<Rule> } {
     let result: Activity | undefined;
+    let appliedRules: Set<Rule> = new Set<Rule>();
+
     for (let i = 0; i < rules.length; i++) {
         let rule = rules[i];
         if (doesRuleApply(rule, rawActivity)) {
             if (!result) {
                 result = applyRule(rule, rawActivity);
-                log(`Applying rule '${rule.title}' to ${JSON.stringify(rawActivity)} => ${JSON.stringify(result)}`);
+                appliedRules.add(rule);
+                log(`Applying rule '${rule.title}' via regex '${rule.descriptionRegex}' to ${JSON.stringify(rawActivity)} => ${JSON.stringify(result)}`);
             } else {
-                log(`Rule '${rule.title}' would have applied to ${JSON.stringify(rawActivity)} but a rule has already been applied.`);
+                log(`Rule '${rule.title}' via regex '${rule.descriptionRegex}' would have applied to ${JSON.stringify(rawActivity)} but a rule has already been applied.`);
             }
         }
     }
 
-    log(`Applying default rule to ${JSON.stringify(rawActivity)}`);
-    return result || applyRule(defaultParsingRule, rawActivity);
+    return { activity: result || applyDefaultRuleToRawActivity(rawActivity), appliedRules: appliedRules };
 }
 
 function doesRuleApply(rule: Rule, rawActivity: RawActivity): boolean {
@@ -299,24 +321,53 @@ function executeCancelOutActionOnActivities(action: CancelOutAction, activities:
     let allValidSrc = activities.filter((a) => a.type === action.criteria.aType);
     let allValidDst = activities.filter((a) => a.type === action.criteria.bType);
 
+    let pairsToCancelOut: { src: Activity, dst: Activity }[] = [];
+    let activitiesToActUpon: Activity[] = [];
+
     allValidSrc.forEach((src) => {
-        let matchOn = action.criteria.matchOn;
-        let matchOnValue = src.metadata[matchOn];
-        let dst = allValidDst.filter((dst) => {
-            if (typeof matchOnValue === "number") {
-                return Math.abs(dst.metadata[matchOn]) === Math.abs(matchOnValue);
-            } else if (typeof matchOnValue === "string") {
-                return dst.metadata[matchOn] === matchOnValue;
+        if (activitiesToActUpon.indexOf(src) === -1) {
+            let matchOn = action.criteria.matchOn;
+            let matchOnValue = matchOn === "<amount>" ? src.amount : src.metadata[matchOn];
+            let dst = allValidDst.filter((dst) => {
+                if (dst === src) {
+                    return false;
+                }
+                if (activitiesToActUpon.indexOf(dst) !== -1) {
+                    return false;
+                }
+                if (typeof matchOnValue === "number") {
+                    let dstMatchOnValue = matchOn === "<amount>" ? dst.amount : src.metadata[matchOn];
+                    return Math.abs(dstMatchOnValue) === Math.abs(matchOnValue);
+                } else if (typeof matchOnValue === "string") {
+                    return dst.metadata[matchOn] === matchOnValue;
+                }
+            })[0];
+            if (!!dst) {
+                pairsToCancelOut.push({ src: src, dst: dst });
+                activitiesToActUpon.push(src);
+                activitiesToActUpon.push(dst);
+            } else {
+                log(`Failed to execute action '${action.title}' to ${JSON.stringify(src)}`);
             }
-        })[0];
-        if (!!dst) {
-            log(`Executing action '${action.title}' to ${JSON.stringify(src)} and ${JSON.stringify(dst)}`);
-            let idxOfSrc = activities.indexOf(src);
-            activities.splice(idxOfSrc, 1);
-            let idxOfDst = activities.indexOf(dst);
-            activities.splice(idxOfDst, 1);
         } else {
-            log(`Failed to execute action '${action.title}' to ${JSON.stringify(src)}`);
+            log(`Skip executing action '${action.title}' on ${JSON.stringify(src)}, already set to be executed`);
         }
     });
+
+    pairsToCancelOut.forEach((pair) => {
+        log(`Executing action '${action.title}' to ${JSON.stringify(pair.src)} and ${JSON.stringify(pair.dst)}`);
+        let idxOfSrc = activities.indexOf(pair.src);
+        activities.splice(idxOfSrc, 1);
+        let idxOfDst = activities.indexOf(pair.dst);
+        activities.splice(idxOfDst, 1);
+    });
+}
+
+function logUnUsedRules(rules: Rule[], usedRules: Set<Rule>) {
+    log(`Used ${usedRules.size} / ${rules.length} rules`)
+    for (let rule of rules) {
+        if (!usedRules.has(rule)) {
+            log(`Did not use rule '${rule.title}' with regexp '${rule.descriptionRegex}' from file '${rule.sourceFile}'`);
+        }
+    }
 }

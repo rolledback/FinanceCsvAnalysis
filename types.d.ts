@@ -26,7 +26,8 @@ export type Imports = string[];
 export type Rule = {
     title: string,
     descriptionRegex: string | string[],
-    result: RuleResult
+    result: RuleResult,
+    sourceFile: string
 };
 
 export type CancelOutAction = {
